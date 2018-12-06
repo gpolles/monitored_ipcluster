@@ -1,5 +1,6 @@
 import psutil
 import time
+import signal
 
 _last_net_usage_time = {}
 _last_net_usage_vals = {}
@@ -31,8 +32,11 @@ def get_process_data(pid):
                 disk_io += get_disk_io_usage(sp)
                 pcpu += sp.cpu_percent(_timeout/_average_points)
 
-    except:
+    except psutil.NoSuchProcess:
         pass
+
+    except KeyboardInterrupt:
+        return
 
     return net/_average_points, pcpu/_average_points, rss/_average_points, disk_io/_average_points
 
@@ -45,7 +49,8 @@ def get_net_usage(pid):
 
     now = time.time()
     try:
-        lines = open('/proc/%d/net/dev' % pid, 'r').readlines()
+        with open('/proc/%d/net/dev' % pid, 'r') as f:
+            lines = f.readlines()
     except (IOError, FileNotFoundError) as exc:
         raise psutil.NoSuchProcess(pid) from None
     for l in lines[2:]:
@@ -85,17 +90,20 @@ def get_disk_io_usage(p):
     return int(rs + ws)
 
 
+def init_worker():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def get_pstree_data(pid):
     try:
         p = psutil.Process(pid)
-        tree = [sp.pid for sp in p.children(True)] + [p]
+        tree = [sp.pid for sp in p.children(True)] + [pid]
 
         net, pcpu, rss, disk_io = 0, 0, 0, 0
 
-        pool = Pool(len(tree))
+        pool = Pool(len(tree), init_worker)
 
         for x in pool.map(get_process_data, tree):
-            print(x)
             net += x[0]
             pcpu += x[1]
             rss += x[2]
@@ -108,7 +116,19 @@ def get_pstree_data(pid):
             'disk_io': disk_io
         }
 
+        pool.close()
+        pool.join()
+
         return data
 
     except psutil.NoSuchProcess:
         return None
+
+    except KeyboardInterrupt:
+        # clean gracefully
+        pool.terminate()
+        pool.join()
+        raise
+
+    finally:
+        pool.join()

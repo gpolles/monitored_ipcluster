@@ -52,6 +52,7 @@ def handle_scheduler(data):
     scheduler = {
         uid: data
     }
+    scheduler[uid]['_lastreq'] = time.time()
     return {
         'data': request_queue[uid],
         'on_success': partial(clear_queue, uid)
@@ -113,14 +114,31 @@ def cull_inactive(timeout=20):
         except KeyError:
             pass
 
+    to_cull = []
+    for uid, data in scheduler.items():
+        now = time.time()
+        if now - scheduler[uid]['_lastreq'] > timeout:
+            to_cull.append(uid)
+            logger.info('culling scheduler: {}'.format(uid))
+    for uid in to_cull:
+        try:
+            del scheduler[uid]
+            del request_queue[uid]
+        except KeyError:
+            pass
+
 
 def cleanup():
     pass
 
 
 def req_exit():
+
     for uid in workers:
         request_queue[uid].append(REQ_EXIT)
+    for uid in scheduler:
+        request_queue[uid].append(REQ_EXIT)
+
     return {
         'data': {'status': 'ok'},
         'on_success': do_nothing
@@ -128,6 +146,7 @@ def req_exit():
 
 
 def req_restart():
+    # restart workers
     for uid in workers:
         request_queue[uid].append(REQ_RESTART)
     return {
@@ -144,16 +163,26 @@ def req_reset():
 
 
 def req_info():
-    host = 'Not yet available'
+    import socket as sk
+    host = sk.getfqdn()
     n_workers = len(workers)
-    ave_cpu = sum([w.get('pcpu', 0) for w in workers.values()]) / n_workers
+    if n_workers > 0:
+        ave_cpu = sum([w.get('pcpu', 0) for w in workers.values()]) / n_workers
+    else:
+        ave_cpu = 0
 
+    scheduler_host = 'N/A'
+    for uid in scheduler:
+        if 'host' in scheduler[uid]:
+            scheduler_host = scheduler[uid]['host']
+            
     return {
         'data': {
             'status': 'ok',
             'n_workers': n_workers,
             'ave_cpu': ave_cpu,
             'host': host,
+            'shost': scheduler_host,
             'scheduler': scheduler,
         },
         'on_success': do_nothing
@@ -203,11 +232,11 @@ def server_loop(ipclient_args=None):
     context = zmq.Context()
     socket = context.socket(zmq.REP)
     socket.setsockopt(zmq.LINGER, 0)
-    socket.bind("tcp://*:5555")
+    socket.bind("tcp://*:5558")
 
     ctcpsocket = context.socket(zmq.REP)
     ctcpsocket.setsockopt(zmq.LINGER, 0)
-    ctcpsocket.bind("tcp://*:5556")
+    ctcpsocket.bind("tcp://*:5559")
 
     cunixsocket = context.socket(zmq.REP)
     cunixsocket.setsockopt(zmq.LINGER, 0)

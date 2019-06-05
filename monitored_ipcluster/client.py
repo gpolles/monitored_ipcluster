@@ -155,7 +155,7 @@ def socket_open(context):
     socket.setsockopt(zmq.LINGER, 0)
     socket.RCVTIMEO = 1000
     socket.SNDTIMEO = 1000
-    socket.connect("tcp://localhost:5555")
+    socket.connect("tcp://localhost:5558")
     pollin = zmq.Poller()
     pollin.register(socket, zmq.POLLIN)
     pollout = zmq.Poller()
